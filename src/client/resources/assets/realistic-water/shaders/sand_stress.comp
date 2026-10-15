@@ -1,0 +1,107 @@
+#version 450
+#include "common.glsl"
+layout(local_size_x = 256) in;
+layout(std430, binding = 1) readonly buffer Vel { float vel[]; };
+layout(std430, binding = 2) readonly buffer Flags { uint cellFlags[]; };
+layout(std430, binding = 3) readonly buffer Scale { float scale[]; };
+layout(std430, binding = 4) writeonly buffer Stress { float stress[]; };
+
+#include "sand_strain.glsl"
+
+float scaleAt(ivec3 c) {
+    return inBox(c) ? scale[cellIndex(c)] : 0.0;
+}
+
+bool getEdgeScale0(ivec3 e, out float outScale) {
+    ivec3 c0 = e;
+    ivec3 c1 = e - ivec3(1, 0, 0);
+    ivec3 c2 = e - ivec3(0, 1, 0);
+    ivec3 c3 = e - ivec3(1, 1, 0);
+
+    uint t0 = typeAt(c0); if (t0 == CELL_AIR) return false;
+    uint t1 = typeAt(c1); if (t1 == CELL_AIR) return false;
+    uint t2 = typeAt(c2); if (t2 == CELL_AIR) return false;
+    uint t3 = typeAt(c3); if (t3 == CELL_AIR) return false;
+
+    float sum = 0.0;
+    float n = 0.0;
+    if (t0 == CELL_FLUID) { sum += scaleAt(c0); n += 1.0; }
+    if (t1 == CELL_FLUID) { sum += scaleAt(c1); n += 1.0; }
+    if (t2 == CELL_FLUID) { sum += scaleAt(c2); n += 1.0; }
+    if (t3 == CELL_FLUID) { sum += scaleAt(c3); n += 1.0; }
+    if (n == 0.0) return false;
+    outScale = sum / n;
+    return true;
+}
+
+bool getEdgeScale1(ivec3 e, out float outScale) {
+    ivec3 c0 = e;
+    ivec3 c1 = e - ivec3(1, 0, 0);
+    ivec3 c2 = e - ivec3(0, 0, 1);
+    ivec3 c3 = e - ivec3(1, 0, 1);
+
+    uint t0 = typeAt(c0); if (t0 == CELL_AIR) return false;
+    uint t1 = typeAt(c1); if (t1 == CELL_AIR) return false;
+    uint t2 = typeAt(c2); if (t2 == CELL_AIR) return false;
+    uint t3 = typeAt(c3); if (t3 == CELL_AIR) return false;
+
+    float sum = 0.0;
+    float n = 0.0;
+    if (t0 == CELL_FLUID) { sum += scaleAt(c0); n += 1.0; }
+    if (t1 == CELL_FLUID) { sum += scaleAt(c1); n += 1.0; }
+    if (t2 == CELL_FLUID) { sum += scaleAt(c2); n += 1.0; }
+    if (t3 == CELL_FLUID) { sum += scaleAt(c3); n += 1.0; }
+    if (n == 0.0) return false;
+    outScale = sum / n;
+    return true;
+}
+
+bool getEdgeScale2(ivec3 e, out float outScale) {
+    ivec3 c0 = e;
+    ivec3 c1 = e - ivec3(0, 1, 0);
+    ivec3 c2 = e - ivec3(0, 0, 1);
+    ivec3 c3 = e - ivec3(0, 1, 1);
+
+    uint t0 = typeAt(c0); if (t0 == CELL_AIR) return false;
+    uint t1 = typeAt(c1); if (t1 == CELL_AIR) return false;
+    uint t2 = typeAt(c2); if (t2 == CELL_AIR) return false;
+    uint t3 = typeAt(c3); if (t3 == CELL_AIR) return false;
+
+    float sum = 0.0;
+    float n = 0.0;
+    if (t0 == CELL_FLUID) { sum += scaleAt(c0); n += 1.0; }
+    if (t1 == CELL_FLUID) { sum += scaleAt(c1); n += 1.0; }
+    if (t2 == CELL_FLUID) { sum += scaleAt(c2); n += 1.0; }
+    if (t3 == CELL_FLUID) { sum += scaleAt(c3); n += 1.0; }
+    if (n == 0.0) return false;
+    outScale = sum / n;
+    return true;
+}
+
+void main() {
+    int bt = int(GID_U);
+    if (bt >= G.boxMin.w) {
+        return;
+    }
+    ivec3 c = boxCell(bt);
+    int i = cellIndex(c);
+    float k = 2.0 * G.matB.y;
+    vec3 diag = vec3(0.0);
+    if (typeAt(c) == CELL_FLUID) {
+        diag = vec3(
+            faceVel(0, c + ivec3(1, 0, 0)) - faceVel(0, c),
+            faceVel(1, c + ivec3(0, 1, 0)) - faceVel(1, c),
+            faceVel(2, c + ivec3(0, 0, 1)) - faceVel(2, c));
+        diag -= (diag.x + diag.y + diag.z) * (1.0 / 3.0);
+        diag *= k * scale[i];
+    }
+    int baseStress = 6 * i;
+    stress[baseStress + 0] = diag.x;
+    stress[baseStress + 1] = diag.y;
+    stress[baseStress + 2] = diag.z;
+
+    float s0, s1, s2;
+    stress[baseStress + 3] = getEdgeScale0(c, s0) ? k * s0 * edgeStrain0(c) : 0.0;
+    stress[baseStress + 4] = getEdgeScale1(c, s1) ? k * s1 * edgeStrain1(c) : 0.0;
+    stress[baseStress + 5] = getEdgeScale2(c, s2) ? k * s2 * edgeStrain2(c) : 0.0;
+}

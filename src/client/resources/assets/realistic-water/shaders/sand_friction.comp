@@ -1,0 +1,81 @@
+#version 450
+#include "common.glsl"
+layout(local_size_x = 256) in;
+layout(std430, binding = 1) buffer Vel { float vel[]; };
+layout(std430, binding = 2) readonly buffer Flags { uint cellFlags[]; };
+layout(std430, binding = 3) readonly buffer Stress { float stress[]; };
+
+uint typeAt(ivec3 c) {
+    return inBox(c) ? (cellFlags[cellIndex(c)] & 0xFFu) : CELL_AIR;
+}
+
+float stressAt(ivec3 c, int component) {
+    return inBox(c) ? stress[6 * cellIndex(c) + component] : 0.0;
+}
+
+bool fastBoxFace(int t, out int comp, out ivec3 f) {
+    ivec3 d = G.boxMax.xyz - G.boxMin.xyz;
+    int n0 = (d.x + 1) * d.y * d.z;
+    if (t < n0) {
+        comp = 0;
+        int d0 = d.x + 1;
+        f = G.boxMin.xyz + ivec3(t % d0, (t / d0) % d.y, t / (d0 * d.y));
+        return true;
+    }
+    t -= n0;
+    int n1 = d.x * (d.y + 1) * d.z;
+    if (t < n1) {
+        comp = 1;
+        int d1 = d.y + 1;
+        f = G.boxMin.xyz + ivec3(t % d.x, (t / d.x) % d1, t / (d.x * d1));
+        return true;
+    }
+    t -= n1;
+    int n2 = d.x * d.y * (d.z + 1);
+    if (t < n2) {
+        comp = 2;
+        f = G.boxMin.xyz + ivec3(t % d.x, (t / d.x) % d.y, t / (d.x * d.y));
+        return true;
+    }
+    f = ivec3(0);
+    return false;
+}
+
+void main() {
+    int comp;
+    ivec3 f;
+    if (!fastBoxFace(int(GID_U), comp, f)) {
+        return;
+    }
+    ivec3 axis = axisVec(comp);
+    ivec3 ca = f - axis;
+    uint ta = typeAt(ca);
+    uint tb = typeAt(f);
+    if (ta == CELL_SOLID || tb == CELL_SOLID || (ta != CELL_FLUID && tb != CELL_FLUID)) {
+        return;
+    }
+
+    int idx_f = inBox(f) ? 6 * cellIndex(f) : -1;
+    int idx_ca = inBox(ca) ? 6 * cellIndex(ca) : -1;
+
+    float d = (idx_f >= 0 ? stress[idx_f + comp] : 0.0) - (idx_ca >= 0 ? stress[idx_ca + comp] : 0.0);
+
+    if (comp == 0) {
+        // other = 1 -> plane 0 (s = 3)
+        d += stressAt(f + ivec3(0, 1, 0), 3) - (idx_f >= 0 ? stress[idx_f + 3] : 0.0);
+        // other = 2 -> plane 1 (s = 4)
+        d += stressAt(f + ivec3(0, 0, 1), 4) - (idx_f >= 0 ? stress[idx_f + 4] : 0.0);
+    } else if (comp == 1) {
+        // other = 0 -> plane 0 (s = 3)
+        d += stressAt(f + ivec3(1, 0, 0), 3) - (idx_f >= 0 ? stress[idx_f + 3] : 0.0);
+        // other = 2 -> plane 2 (s = 5)
+        d += stressAt(f + ivec3(0, 0, 1), 5) - (idx_f >= 0 ? stress[idx_f + 5] : 0.0);
+    } else {
+        // other = 0 -> plane 1 (s = 4)
+        d += stressAt(f + ivec3(1, 0, 0), 4) - (idx_f >= 0 ? stress[idx_f + 4] : 0.0);
+        // other = 1 -> plane 2 (s = 5)
+        d += stressAt(f + ivec3(0, 1, 0), 5) - (idx_f >= 0 ? stress[idx_f + 5] : 0.0);
+    }
+
+    vel[faceIndex(comp, f)] += d;
+}
